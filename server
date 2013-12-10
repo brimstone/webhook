@@ -1,0 +1,48 @@
+#!/bin/bash -x
+
+process() {
+	eval $(echo "${POST[payload]}" | json_bash payload)
+	echo foo: $payload_foo
+}
+
+while true; do
+	# listen on a port, mapping file handles to the $COPROC array
+	coproc nc -lp 8081
+	# first read our verb, url and http version
+	read -u "${COPROC[0]}" ENV_verb ENV_url ENV_http
+	# trim the \r
+	# TODO make this not fail when nc gets the SIGTERM
+	ENV_http="${ENV_http:0:$[ ${#ENV_http} - 1 ]}"
+	# now read all of the headers from the stdout of coproc
+	while read -u "${COPROC[0]}" aline; do
+		# trim the \r
+		aline="${aline:0:$[ ${#aline} - 1 ]}"
+		# if we're at the end of our headers, and our input is a blank line
+		if [ -z "${aline}" ]; then
+			# wait! if our verb is POST, then we need to also read some more data from the client
+			if [ "$ENV_verb" = "POST" ]; then
+				read -n "$ENV_Content_Length" -u "${COPROC[0]}" POSTDATA
+				# split on the & first
+				declare -A POST
+				for d in $(echo "$POSTDATA" | tr '&' '\n'); do
+					# then split on the =
+					key="${d%%=*}"
+					# then decode everything
+					POST[$key]="$(echo -e "$(echo "${d#*=}" | sed -E 's/\+/ /g;s/%([0-9A-F]{2})/\\x\1/g')")"
+				done
+			fi
+			# right now, just echo out our variables and bail
+			break
+		fi
+		# split up the header line and set environment variables accordingly
+		key="${aline%%: *}"
+		eval export "ENV_${key//-/_}"="\"${aline#*: }\""
+	done
+	
+	process
+
+	# we're done with what the user gave us, so kill the socket
+	kill "$COPROC_PID"
+	# wait to make sure the socket is dead before starting it back again
+	wait "$COPROC_PID" &>/dev/null
+done
