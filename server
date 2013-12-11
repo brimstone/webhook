@@ -1,13 +1,36 @@
-#!/bin/bash -x
+#!/bin/bash
 
 process() {
-	eval $(echo "${POST[payload]}" | json_bash payload)
-	echo foo: $payload_foo
+	# parse out the payload
+	eval $(echo "${POST[payload]}" | ./json_bash payload)
+	(
+	# clone the repo
+	echo "cloning $payload_repository_url"
+	echo "cloning $payload_repository_url" >&3
+	git clone "$payload_repository_url"
+	# figure out our directory
+	dir="$(basename "$payload_repository_url")"
+	# spit it out to the screen
+	echo "Directory: $dir"
+	if [ -e "$dir/build" ]; then
+		cd "$dir"
+		echo "$(date) running build script"
+		./build
+		echo "Exit code: $?"
+		cd ..
+	fi
+	echo "cleaning up $dir"
+	rm -rf "$dir"
+	) 2>&1 3>&2 | (
+		while read aline; do
+			echo "$(date) $aline"
+		done
+	) | mail -s "Build test of $payload_repository_name" brimstone@the.narro.ws &
 }
 
 while true; do
 	# listen on a port, mapping file handles to the $COPROC array
-	coproc nc -lp 8081
+	coproc nc -lp 8081 2>/dev/null
 	# first read our verb, url and http version
 	read -u "${COPROC[0]}" ENV_verb ENV_url ENV_http
 	# trim the \r
@@ -44,5 +67,5 @@ while true; do
 	# we're done with what the user gave us, so kill the socket
 	kill "$COPROC_PID"
 	# wait to make sure the socket is dead before starting it back again
-	wait "$COPROC_PID" &>/dev/null
+	wait "$COPROC_PID"
 done
