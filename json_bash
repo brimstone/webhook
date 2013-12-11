@@ -1,0 +1,32 @@
+#!/usr/bin/perl
+use warnings;
+use strict;
+use JSON;
+
+my $json_raw = "";
+while(my $input = <STDIN>) {
+	$json_raw .= $input;
+}
+
+my $json = decode_json($json_raw);
+
+sub printHASH {
+	my $name = shift;
+	my $ref = shift;
+	map { printThing($name . "_" . $_, $ref->{$_}); } keys($ref);
+}
+
+sub printThing {
+	my $name = shift;
+	my $thing = shift;
+	my $type = ref($thing);
+	if ($type eq "HASH") {
+		printHASH $name, $thing;
+	}
+	else {
+		$name =~ s/\./_/g;
+		$name =~ s/\-/_/g;
+		print "${name}=\"$thing\"\n";
+	}
+}
+printThing $ARGV[0], $json;
