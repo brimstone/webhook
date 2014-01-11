@@ -29,6 +29,9 @@ process() {
 		echo
 		./build
 		echo "Exit code: $?"
+	elif [ -e "Makefile" ]; then
+		make
+		grep -q "^test:" Makefile && make test
 	fi
 	cd ..
 	echo "cleaning up $dir"
