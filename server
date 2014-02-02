@@ -8,34 +8,39 @@ process() {
 		return
 	fi
 	echo "$(date) Processing request for $payload_repository_name"
+	# figure out our directory
+	dir="$(basename "$payload_repository_url")"
 	(
 	echo "Commit $payload_after by $payload_head_commit_author_name ($payload_head_commit_author_username) $payload_head_commit_author_email"
 	echo "\"$payload_head_commit_message\""
 	echo
 	# clone the repo
-	echo "cloning $payload_repository_url"
+	echo "Cloning $payload_repository_url"
 	git clone "$payload_repository_url"
-	echo
-	# figure out our directory
-	dir="$(basename "$payload_repository_url")"
-	# spit it out to the screen
-	echo "Directory: $dir"
 	cd "$dir"
 	if [ -e ".gitmodules" ]; then
 		git submodule update --recursive --init
 	fi
 	if [ -e "build" ]; then
-		echo "$(date) running build script"
+		echo "Running build script"
 		echo
 		./build
-		echo "Exit code: $?"
+		ret=$?
 	elif [ -e "Makefile" ]; then
+		echo "Running make"
+		echo
 		make
-		grep -q "^test:" Makefile && make test
+		ret=$?
+		if [ $ret == 0 ] && grep -q "^test:" Makefile; then
+			make test
+			ret=$?
+		fi
 	fi
 	cd ..
-	echo "cleaning up $dir"
 	rm -rf "$dir"
+	echo "Exit code: $ret"
+	[ $ret != 0 ] && exit $ret
+	exit 0
 	) 2>&1 3>&2 | (
 		while read aline; do
 			if [ -z "$aline" ]; then
@@ -44,8 +49,39 @@ process() {
 				echo "$(date) $aline"
 			fi
 		done
-	) | mail -s "Build test of $payload_repository_name" brimstone@the.narro.ws &
+	) > $dir.log
+	ret=${PIPESTATUS[0]}
+	userrepo=${payload_repository_url##https://github.com/}
+	# check for a current broken build issue
+	issueid=$(ghi list -L build -- $userrepo | awk '/Build/ { print $1 }')
+	if [ $ret == 0 ]; then
+		# build was clean
+		echo "Build was clean"
+		# if we're currently broken
+		# close our current issue id
+		if [ -n "$issueid" ]; then
+			ghi close $issueid -m "$(< $dir.log)" -- $userrepo
+		fi
+	else
+		# build broke
+		echo "build broke"
+		# If email:
+		#mail -s "Build of $payload_repository_name FAILED" brimstone@the.narro.ws < $dir.log
+
+		# if we don't have a current issue
+		if [ -z "$issueid" ]; then
+		# open one
+		ghi open -m "Build FAILED
+$(< $dir.log)" -L build -- $userrepo
+		else
+			ghi comment -m "$(< $dir.log)" $issueid -- $userrepo
+		fi
+
+	fi
+	rm $dir.log
 }
+
+trap 'kill $COPROC_PID;exit' INT
 
 while true; do
 	# listen on a port, mapping file handles to the $COPROC array
