@@ -3,10 +3,10 @@
 	},
 	"webhook": {
 		"commands": [
-					"sudo apt-get update; sudo apt-get -y install screen rubygems",
-					"sudo gem install ghi",
-					"rsync -Pa /vagrant/ webhook",
-					"cd webhook; screen -dmS webhook ./server"
+					"apt-get update; apt-get -y install rubygems netcat-traditional git libjson-perl; apt-get remove --purge -y netcat-openbsd",
+					"gem install ghi",
+					"rsync -Pa /vagrant/ .",
+					"su vagrant -c ./server &"
 					 ]
 	}
 }
