@@ -1,6 +1,7 @@
 #!/bin/bash
 
 process() {
+	notify="$1"
 	# parse out the payload
 	eval $(echo "${POST[payload]}" | ./json_bash payload)
 	if [[ "${payload_repository_url:0:28}" != "https://github.com/brimstone" ]]; then
@@ -52,32 +53,39 @@ process() {
 	) > $dir.log
 	ret=${PIPESTATUS[0]}
 	userrepo=${payload_repository_url##https://github.com/}
-	# check for a current broken build issue
-	issueid=$(ghi list -L build -- $userrepo | awk '/Build/ { print $1 }')
-	if [ $ret == 0 ]; then
-		# build was clean
-		echo "Build was clean"
-		# if we're currently broken
-		# close our current issue id
-		if [ -n "$issueid" ]; then
-			ghi close $issueid -m "$(< $dir.log)" -- $userrepo
-		fi
-	else
-		# build broke
-		echo "build broke"
-		# If email:
-		#mail -s "Build of $payload_repository_name FAILED" brimstone@the.narro.ws < $dir.log
-
-		# if we don't have a current issue
-		if [ -z "$issueid" ]; then
-		# open one
-		ghi open -m "Build FAILED
-$(< $dir.log)" -L build -- $userrepo
+	case "$notify" in
+	issue)
+		# check for a current broken build issue
+		issueid=$(ghi list -- $userrepo | awk '/Build/ { print $1 }')
+		if [ $ret == 0 ]; then
+			# build was clean
+			echo "Build was clean"
+			# if we're currently broken
+			# close our current issue id
+			if [ -n "$issueid" ]; then
+				ghi close $issueid -m "$(< $dir.log)" -- $userrepo
+			fi
 		else
-			ghi comment -m "$(< $dir.log)" $issueid -- $userrepo
+			# build broke
+			echo "build broke"
+			# if we don't have a current issue
+			if [ -z "$issueid" ]; then
+			# open one
+			ghi open -m "Build FAILED
+	$(< $dir.log)" -- $userrepo
+			else
+				ghi comment -m "$(< $dir.log)" $issueid -- $userrepo
+			fi
 		fi
-
-	fi
+	;;
+	email)
+		if [ $ret == 0 ]; then
+			mail -s "Build of $payload_repository_name PASSED" brimstone@the.narro.ws < $dir.log
+		else
+			mail -s "Build of $payload_repository_name FAILED" brimstone@the.narro.ws < $dir.log
+		fi
+	;;
+	esac
 	rm $dir.log
 }
 
@@ -116,8 +124,13 @@ while true; do
 		key="${aline%%: *}"
 		eval export "ENV_${key//-/_}"="\"${aline#*: }\""
 	done
-	
-	process
+
+	if [ "$ENV_url" == "/email" ]; then
+		notify="email"
+	else
+		notify="issue"
+	fi
+	process "$notify"
 
 	# we're done with what the user gave us, so kill the socket
 	kill "$COPROC_PID"
