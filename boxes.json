@@ -2,6 +2,12 @@
 	"default": {
 	},
 	"webhook": {
-		"ip": "172.16.1.10"
+		"ip": "172.16.1.10",
+		"commands": [
+					"sudo apt-get install screen",
+					"sudo gem install ghi",
+					"rsync -Pa /vagrant webhook",
+					"cd webhook; screen -dmS webhook ./server"
+					 ]
 	}
 }
