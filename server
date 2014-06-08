@@ -3,8 +3,13 @@
 process() {
 	notify="$1"
 	# parse out the payload
-	eval $(echo "${POST[payload]}" | ./json_bash payload)
-	if [[ "${payload_repository_url:0:28}" != "https://github.com/brimstone" ]]; then
+	if [ -n "${POST[payload]}" ]; then
+		eval $(echo "${POST[payload]}" | ./json_bash payload)
+	else
+		eval $(echo "$ENV_Postdata" | ./json_bash payload)
+	fi
+	if [[ "${payload_repository_url:0:28}" != "https://github.com/brimstone" ]] \
+	&& [[ "${payload_repository_url:0:24}" != "https://the.narro.ws/git" ]]; then
 		echo "not a valid url: $payload_repository_url"
 		return
 	fi
@@ -19,6 +24,7 @@ process() {
 	echo "Cloning $payload_repository_url"
 	git clone "$payload_repository_url"
 	cd "$dir"
+	ls
 	if [ -e ".gitmodules" ]; then
 		git submodule update --recursive --init
 	fi
@@ -40,7 +46,7 @@ process() {
 	cd ..
 	rm -rf "$dir"
 	echo "Exit code: $ret"
-	[ $ret != 0 ] && exit $ret
+	[ "$ret" != 0 ] && exit $ret
 	exit 0
 	) 2>&1 3>&2 | (
 		while read aline; do
@@ -86,6 +92,7 @@ process() {
 		fi
 	;;
 	esac
+	cat $dir.log
 	rm $dir.log
 }
 
@@ -107,15 +114,19 @@ while true; do
 		if [ -z "${aline}" ]; then
 			# wait! if our verb is POST, then we need to also read some more data from the client
 			if [ "$ENV_verb" = "POST" ]; then
-				read -n "$ENV_Content_Length" -u "${COPROC[0]}" POSTDATA
-				# split on the & first
-				declare -A POST
-				for d in $(echo "$POSTDATA" | tr '&' '\n'); do
-					# then split on the =
-					key="${d%%=*}"
-					# then decode everything
-					POST[$key]="$(echo -e "$(echo "${d#*=}" | sed -E 's/\+/ /g;s/%([0-9A-F]{2})/\\x\1/g')")"
-				done
+				read -n "$(( $ENV_Content_Length - 1))" -u "${COPROC[0]}" POSTDATA
+				if [ "$ENV_Content_Type" = "application/x-form-multipart" ]; then # TODO get the right mime-type
+					# split on the & first
+					declare -A POST
+					for d in $(echo "$POSTDATA" | tr '&' '\n'); do
+						# then split on the =
+						key="${d%%=*}"
+						# then decode everything
+						POST[$key]="$(echo -e "$(echo "${d#*=}" | sed -E 's/\+/ /g;s/%([0-9A-F]{2})/\\x\1/g')")"
+					done
+				else
+					export ENV_Postdata="$POSTDATA"
+				fi
 			fi
 			# right now, just echo out our variables and bail
 			break
@@ -131,9 +142,15 @@ while true; do
 		notify="issue"
 	fi
 	process "$notify"
+cat <<DOG >&${COPROC[1]}
+HTTP/1.1 200 OK
+Content-Type: text/plain
 
+Thanks
+DOG
 	# we're done with what the user gave us, so kill the socket
 	kill "$COPROC_PID"
 	# wait to make sure the socket is dead before starting it back again
 	wait "$COPROC_PID"
+
 done
