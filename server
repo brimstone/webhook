@@ -1,30 +1,39 @@
 #!/bin/bash
 
+set -euo pipefail
+
+source 'json.bash'
+
 process() {
 	notify="$1"
 	# parse out the payload
-	if [ -n "${POST[payload]}" ]; then
-		eval $(echo "${POST[payload]}" | ./json_bash payload)
+	if [ -n "${POST:-}" ] \
+	&& [ -n "${POST[payload]}" ]; then
+		JSON.load "${POST[payload]}" payload
 	else
-		eval $(echo "$ENV_Postdata" | ./json_bash payload)
+		JSON.load "$ENV_Postdata" payload
 	fi
-	if [[ "${payload_repository_url:0:28}" != "https://github.com/brimstone" ]] \
-	&& [[ "${payload_repository_url:0:24}" != "https://the.narro.ws/git" ]]; then
-		echo "not a valid url: $payload_repository_url"
+
+	local url="$(JSON.get -s /repository/url payload)"
+
+	if [[ "${url:0:28}" != "https://github.com/brimstone" ]] \
+	&& [[ "${url:0:23}" != "http://10.42.99.2:3000/" ]] \
+	&& [[ "${url:0:24}" != "https://the.narro.ws/git" ]]; then
+		echo "not a valid url: $url"
 		return
 	fi
-	echo "$(date) Processing request for $payload_repository_name"
+	local name="$(JSON.get -s /repository/name payload)"
+	echo "$(date) Processing request for $name"
 	# figure out our directory
-	dir="$(basename "$payload_repository_url")"
+	dir="$(basename "$url")"
 	(
-	echo "Commit $payload_after by $payload_head_commit_author_name ($payload_head_commit_author_username) $payload_head_commit_author_email"
-	echo "\"$payload_head_commit_message\""
+	echo "Commit $(JSON.get -s /commits/0/id payload) by $(JSON.get -s /commits/0/author/name payload) $(JSON.get -s /commits/0/author/email payload)"
+	echo "\"$(JSON.get -s /commits/0/message payload)\""
 	echo
 	# clone the repo
-	echo "Cloning $payload_repository_url"
-	git clone "$payload_repository_url"
+	echo "Cloning $url"
+	git clone "$url"
 	cd "$dir"
-	ls
 	if [ -e ".gitmodules" ]; then
 		git submodule update --recursive --init
 	fi
@@ -58,7 +67,7 @@ process() {
 		done
 	) > $dir.log
 	ret=${PIPESTATUS[0]}
-	userrepo=${payload_repository_url##https://github.com/}
+	userrepo=${url##https://github.com/}
 	case "$notify" in
 	issue)
 		# check for a current broken build issue
@@ -86,9 +95,9 @@ process() {
 	;;
 	email)
 		if [ $ret == 0 ]; then
-			mail -s "Build of $payload_repository_name PASSED" brimstone@the.narro.ws < $dir.log
+			mail -s "Build of $name PASSED" brimstone@the.narro.ws < $dir.log
 		else
-			mail -s "Build of $payload_repository_name FAILED" brimstone@the.narro.ws < $dir.log
+			mail -s "Build of $name FAILED" brimstone@the.narro.ws < $dir.log
 		fi
 	;;
 	esac
@@ -99,6 +108,8 @@ process() {
 trap 'kill $COPROC_PID;exit' INT
 
 while true; do
+	# Default our content-type
+	export ENV_Content_Type=""
 	# listen on a port, mapping file handles to the $COPROC array
 	coproc nc -lp 8081 2>/dev/null
 	# first read our verb, url and http version
@@ -151,6 +162,6 @@ DOG
 	# we're done with what the user gave us, so kill the socket
 	kill "$COPROC_PID"
 	# wait to make sure the socket is dead before starting it back again
-	wait "$COPROC_PID"
+	wait "$COPROC_PID" || true
 
 done
